@@ -8,11 +8,13 @@ import {
   EyeOff,
   FileText,
   CheckCircle2,
+  AlertCircle,
 } from "lucide-react";
 import type { PayrollRun } from "@/types/models";
 import type { SalaryCommitmentAmendment } from "@/lib/sdk/amendments";
 import { createPayrollRunAmendmentReview } from "@/src/payroll/amendments";
 import { formatCommitmentShort } from "@/lib/privacy/amendments";
+import { useRovingFocus } from "@/src/accessibility/payrollReviewKeyboard";
 
 export interface PayrollRunAmendmentReviewProps {
   originalRun: PayrollRun;
@@ -30,7 +32,10 @@ export function PayrollRunAmendmentReview({
   className = "",
 }: PayrollRunAmendmentReviewProps) {
   const review = createPayrollRunAmendmentReview(originalRun, amendment);
-  const { originalRun: run, amendment: amd, validation, safeDiff } = review;
+  const { originalRun: run, amendment: amd, validation, draftValidation, safeDiff } = review;
+  const actionCount = (onReject ? 1 : 0) + (onApprove ? 1 : 0);
+  const roving = useRovingFocus(actionCount, "horizontal");
+  let actionIndex = 0;
 
   return (
     <div
@@ -77,6 +82,39 @@ export function PayrollRunAmendmentReview({
               </p>
             )}
           </div>
+        </div>
+      )}
+
+      {/* Draft Validation Errors / Warnings (#615) */}
+      {!draftValidation.isValid && (
+        <div
+          role="alert"
+          data-testid="amendment-draft-errors"
+          className="flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 p-4 text-sm"
+        >
+          <AlertCircle className="h-5 w-5 text-red-600 shrink-0 mt-0.5" />
+          <div>
+            <p className="font-semibold text-red-800">Amendment Needs Fixes</p>
+            <ul className="mt-1 space-y-0.5 text-red-700 list-disc list-inside">
+              {draftValidation.errors.map((err, idx) => (
+                <li key={idx}>{err}</li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
+      {draftValidation.isValid && draftValidation.warnings.length > 0 && (
+        <div
+          role="status"
+          data-testid="amendment-draft-warnings"
+          className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs"
+        >
+          <AlertCircle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+          <ul className="space-y-0.5 text-amber-800 list-disc list-inside">
+            {draftValidation.warnings.map((w, idx) => (
+              <li key={idx}>{w}</li>
+            ))}
+          </ul>
         </div>
       )}
 
@@ -181,18 +219,26 @@ export function PayrollRunAmendmentReview({
         </div>
       </div>
 
-      {/* Review Actions */}
+      {/* Review Actions — roving-focus toolbar (#271) */}
       <div className="flex items-center justify-between border-t border-gray-100 pt-4">
         <span className="text-xs text-gray-500">
           Reviewing amendment leaves original payroll run untouched.
         </span>
 
-        <div className="flex items-center gap-2">
+        <div
+          role="toolbar"
+          aria-label="Amendment review actions"
+          data-testid="amendment-review-actions"
+          onKeyDown={actionCount > 1 ? roving.handleKeyDown : undefined}
+          className="flex items-center gap-2"
+        >
           {onReject && (
             <button
               type="button"
+              data-roving-item
+              {...roving.getItemProps(actionIndex++)}
               onClick={() => onReject(amd.id)}
-              className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+              className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2"
             >
               Reject Amendment
             </button>
@@ -200,9 +246,11 @@ export function PayrollRunAmendmentReview({
           {onApprove && (
             <button
               type="button"
+              data-roving-item
+              {...roving.getItemProps(actionIndex++)}
               onClick={() => onApprove(amd.id)}
               disabled={!validation.canApprove}
-              className="flex items-center gap-1 rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed"
+              className="flex items-center gap-1 rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2"
             >
               <CheckCircle2 className="h-3.5 w-3.5" />
               Approve Amendment

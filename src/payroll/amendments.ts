@@ -15,12 +15,114 @@ export interface PayrollRunAmendmentReviewResult {
   amendment: SalaryCommitmentAmendment;
   safeDiff: AmendmentSafeDiff;
   validation: AmendmentPlanValidation;
+  draftValidation: AmendmentDraftValidation;
   isOriginalPreserved: boolean;
   privacyNotice: string;
   warning?: string;
 }
 
 export type ReadOnlyPayrollRun = Readonly<PayrollRun>;
+
+export interface AmendmentDraftValidation {
+  isValid: boolean;
+  errors: string[];
+  warnings: string[];
+}
+
+export interface AmendmentDraftInput {
+  id?: string;
+  employeeId: string;
+  employeeReference: string;
+  previousVersion: number;
+  commitmentVersion: number;
+  previousCommitment: string;
+  nextCommitment: string;
+  period: string;
+  approvalStatus: string;
+  reason?: string;
+}
+
+/**
+ * Validates a payroll run amendment draft before it enters the review
+ * workflow, producing actionable errors an operator can fix without
+ * regressing the original run. Salary values are never included in
+ * error text.
+ */
+export function validateAmendmentDraft(
+  draft: AmendmentDraftInput,
+  originalRun?: Pick<PayrollRun, "id" | "employeeIds">,
+): AmendmentDraftValidation {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+
+  if (!draft.employeeId?.trim()) {
+    errors.push(
+      "Employee ID is required. Provide the payroll employee identifier this amendment targets.",
+    );
+  }
+  if (!draft.employeeReference?.trim()) {
+    errors.push(
+      "Privacy-safe employee reference is required so maintainers can review without salary values.",
+    );
+  }
+  if (!draft.previousCommitment?.trim()) {
+    errors.push(
+      "Previous commitment hash is required. Refresh the amendment against the latest on-chain commitment.",
+    );
+  }
+  if (!draft.nextCommitment?.trim()) {
+    errors.push(
+      "Next commitment hash is required. Generate the encrypted commitment before submitting.",
+    );
+  }
+  if (
+    draft.previousCommitment?.trim() &&
+    draft.nextCommitment?.trim() &&
+    draft.previousCommitment.trim() === draft.nextCommitment.trim()
+  ) {
+    errors.push(
+      "No-op amendment blocked: the proposed commitment matches the current commitment. There is nothing to approve.",
+    );
+  }
+  if (
+    !Number.isInteger(draft.previousVersion) ||
+    !Number.isInteger(draft.commitmentVersion) ||
+    draft.commitmentVersion !== draft.previousVersion + 1
+  ) {
+    errors.push(
+      `Commitment version must advance exactly one step (v${draft.previousVersion} → v${draft.previousVersion + 1}). Regenerate the amendment from the latest on-chain version.`,
+    );
+  }
+  if (!draft.period?.trim()) {
+    errors.push(
+      "Payroll period is required so the amendment is applied to the correct cycle.",
+    );
+  }
+  if (draft.approvalStatus !== "pending") {
+    errors.push(
+      `Only pending amendments can be submitted for review (this one is "${draft.approvalStatus}"). Create a new pending amendment instead.`,
+    );
+  }
+  if (
+    originalRun &&
+    Array.isArray(originalRun.employeeIds) &&
+    originalRun.employeeIds.length > 0 &&
+    draft.employeeId?.trim() &&
+    !originalRun.employeeIds.includes(draft.employeeId)
+  ) {
+    errors.push(
+      `Employee ${draft.employeeId} is not part of payroll run ${originalRun.id}. Verify the employee roster before amending.`,
+    );
+  }
+
+  if (!draft.reason?.trim()) {
+    warnings.push(
+      "Add a rationale so reviewers understand the change without seeing salary values.",
+    );
+  }
+
+  return { isValid: errors.length === 0, errors, warnings };
+}
 
 /**
  * Validates that an amendment review does not mutate or overwrite the original payroll run record.
@@ -59,6 +161,7 @@ export function createPayrollRunAmendmentReview(
 
   const safeDiff = getAmendmentSafeDiff(amendment);
   const validation = validateAmendmentPlan(amendment);
+  const draftValidation = validateAmendmentDraft(amendment, originalRun);
 
   let warning: string | undefined;
   if (validation.isStale) {
@@ -72,6 +175,7 @@ export function createPayrollRunAmendmentReview(
     amendment,
     safeDiff,
     validation,
+    draftValidation,
     isOriginalPreserved: true,
     privacyNotice: AMENDMENT_PRIVACY_NOTICE,
     warning,
